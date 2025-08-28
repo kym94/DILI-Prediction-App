@@ -22,7 +22,7 @@ st.set_page_config(
 )
 
 # Configuration GitHub Releases
-GITHUB_REPO = "votre-username/votre-repo"  # À MODIFIER
+GITHUB_REPO = "kym94/DILI-Prediction-App"  # À MODIFIER
 MODEL_VERSION = "v1.0"
 MODEL_URL = f"https://github.com/{GITHUB_REPO}/releases/download/{MODEL_VERSION}/best_dili_model_20250826_002227.pkl"
 
