@@ -538,25 +538,113 @@ def main():
 
         # Instructions
         st.info("""
-        📝 **Format attendu:** Fichier CSV avec une colonne 'SMILES'  
+        📋 **Formats supportés:** Fichiers CSV et Excel (.xlsx)  
         📊 **Limite recommandée:** <1000 molécules pour de bonnes performances  
         ⏱️ **Temps de calcul:** ~1-2 secondes par molécule
+
+        **Colonnes SMILES acceptées:** SMILES, Canonical SMILES, canonical_smiles, smiles, etc.
         """)
 
-        uploaded_file = st.file_uploader("Sélectionner fichier CSV", type=['csv'])
+        uploaded_file = st.file_uploader("Sélectionner fichier", type=['csv', 'xlsx'])
 
         if uploaded_file:
             try:
-                df = pd.read_csv(uploaded_file)
+                # Chargement du fichier selon l'extension
+                file_extension = uploaded_file.name.split('.')[-1].lower()
+
+                if file_extension == 'csv':
+                    df = pd.read_csv(uploaded_file)
+                elif file_extension in ['xlsx', 'xls']:
+                    df = pd.read_excel(uploaded_file)
+                else:
+                    st.error("Format de fichier non supporté")
+                    return
+
                 st.success(f"✅ Fichier chargé: {len(df)} lignes détectées")
 
-                if 'SMILES' in df.columns:
-                    st.write("**Aperçu des données:**")
-                    st.dataframe(df.head(10))
+                # Détection flexible de la colonne SMILES
+                possible_smiles_columns = [
+                    'SMILES', 'Canonical SMILES', 'canonical_smiles', 'smiles',
+                    'Canonical_SMILES', 'CANONICAL_SMILES', 'Smiles',
+                    'canonical smiles', 'SMILES_canonical', 'mol_smiles'
+                ]
 
-                    n_molecules = len(df)
-                    estimated_time = n_molecules * 1.5  # secondes
-                    st.info(f"⏱️ Temps estimé: {estimated_time:.0f} secondes pour {n_molecules} molécules")
+                detected_smiles_col = None
+                for col_name in possible_smiles_columns:
+                    if col_name in df.columns:
+                        detected_smiles_col = col_name
+                        break
+
+                if detected_smiles_col:
+                    st.success(f"🎯 Colonne SMILES détectée: '{detected_smiles_col}'")
+
+                    # Option pour changer de colonne si l'utilisateur le souhaite
+                    col1, col2 = st.columns([3, 1])
+                    with col1:
+                        smiles_column = st.selectbox(
+                            "Colonne SMILES à utiliser:",
+                            options=df.columns.tolist(),
+                            index=df.columns.tolist().index(detected_smiles_col)
+                        )
+                    with col2:
+                        if smiles_column != detected_smiles_col:
+                            st.warning("⚠️ Colonne modifiée")
+
+                else:
+                    # Aucune colonne SMILES détectée automatiquement
+                    st.warning("⚠️ Aucune colonne SMILES détectée automatiquement")
+                    smiles_column = st.selectbox(
+                        "Sélectionner manuellement la colonne SMILES:",
+                        options=df.columns.tolist(),
+                        help="Choisissez la colonne contenant les codes SMILES"
+                    )
+
+                # Vérification que la colonne sélectionnée existe et contient des données
+                if smiles_column and smiles_column in df.columns:
+                    # Vérifier qu'il y a des données non-vides dans cette colonne
+                    non_empty_smiles = df[smiles_column].dropna()
+                    if len(non_empty_smiles) == 0:
+                        st.error(f"❌ La colonne '{smiles_column}' ne contient aucune donnée SMILES valide")
+                        return
+
+                    st.write("**Aperçu des données:**")
+                    preview_df = df.head(10).copy()
+                    # Mettre en évidence la colonne SMILES sélectionnée
+                    if len(preview_df.columns) > 10:
+                        # Afficher prioritairement la colonne SMILES et quelques autres
+                        priority_cols = [smiles_column]
+                        other_cols = [col for col in df.columns if col != smiles_column][:9]
+                        display_cols = priority_cols + other_cols
+                        preview_df = preview_df[display_cols]
+
+                    st.dataframe(preview_df)
+
+                    # Statistiques sur les données SMILES
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("Total molécules", len(df))
+                    with col2:
+                        valid_smiles = len(non_empty_smiles)
+                        st.metric("SMILES valides", valid_smiles)
+                    with col3:
+                        empty_smiles = len(df) - valid_smiles
+                        st.metric("SMILES vides", empty_smiles)
+                    with col4:
+                        estimated_time = valid_smiles * 1.5  # secondes
+                        st.metric("Temps estimé", f"{estimated_time / 60:.1f} min")
+
+                    if empty_smiles > 0:
+                        st.warning(f"⚠️ {empty_smiles} lignes avec SMILES vides seront ignorées")
+
+                    # Options avancées
+                    with st.expander("⚙️ Options avancées"):
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            skip_invalid = st.checkbox("Ignorer les SMILES invalides", value=True)
+                            save_errors = st.checkbox("Sauvegarder les erreurs", value=True)
+                        with col2:
+                            batch_size = st.slider("Taille des lots", min_value=10, max_value=100, value=50)
+                            show_progress = st.checkbox("Affichage détaillé", value=True)
 
                     if st.button("🚀 Lancer prédictions batch", type="primary"):
                         model = load_model()
@@ -564,74 +652,147 @@ def main():
                             return
 
                         results = []
+                        errors = []
                         progress_bar = st.progress(0)
                         status_text = st.empty()
 
-                        for i, row in df.iterrows():
-                            smiles = row['SMILES']
-                            status_text.text(f'Traitement molécule {i + 1}/{len(df)}: {smiles[:30]}...')
+                        # Filtrer les lignes avec SMILES non-vides
+                        df_filtered = df.dropna(subset=[smiles_column]).copy()
 
-                            # Calculer features et prédire
-                            features = calculate_descriptors(smiles)
-                            if features:
-                                pred, probs, conf = predict_dili(model, features)
-                                prob_dili = probs[1] if probs is not None and len(probs) > 1 else 0.5
-                                result = 'DILI' if pred == 1 else 'Non-DILI' if pred == 0 else 'Erreur'
-                            else:
-                                pred, prob_dili, conf, result = None, None, None, 'Erreur SMILES'
+                        for i, row in df_filtered.iterrows():
+                            smiles = row[smiles_column]
 
-                            # Ajouter autres colonnes du fichier original
-                            result_row = row.to_dict()
-                            result_row.update({
-                                'Prediction': result,
-                                'DILI_Probability': prob_dili,
-                                'Confidence': conf,
-                                'Risk_Level': ('Élevé' if prob_dili and prob_dili > 0.7 else
-                                               'Modéré' if prob_dili and prob_dili > 0.3 else
-                                               'Faible' if prob_dili else 'Inconnu')
-                            })
-                            results.append(result_row)
+                            if show_progress:
+                                status_text.text(f'Molécule {i + 1}/{len(df_filtered)}: {str(smiles)[:40]}...')
 
-                            progress_bar.progress((i + 1) / len(df))
+                            try:
+                                # Calculer features et prédire
+                                features = calculate_descriptors(smiles)
+                                if features:
+                                    pred, probs, conf = predict_dili(model, features)
+                                    prob_dili = probs[1] if probs is not None and len(probs) > 1 else 0.5
+                                    result = 'DILI' if pred == 1 else 'Non-DILI' if pred == 0 else 'Erreur'
+
+                                    # Ajouter toutes les colonnes du fichier original
+                                    result_row = row.to_dict()
+                                    result_row.update({
+                                        'Prediction': result,
+                                        'DILI_Probability': prob_dili,
+                                        'Confidence': conf,
+                                        'Risk_Level': ('Élevé' if prob_dili and prob_dili > 0.7 else
+                                                       'Modéré' if prob_dili and prob_dili > 0.3 else
+                                                       'Faible' if prob_dili else 'Inconnu')
+                                    })
+                                    results.append(result_row)
+
+                                else:
+                                    # SMILES invalide
+                                    if skip_invalid:
+                                        error_info = {
+                                            'Index': i,
+                                            'SMILES': smiles,
+                                            'Erreur': 'SMILES invalide',
+                                            **row.to_dict()
+                                        }
+                                        errors.append(error_info)
+                                    else:
+                                        result_row = row.to_dict()
+                                        result_row.update({
+                                            'Prediction': 'Erreur SMILES',
+                                            'DILI_Probability': None,
+                                            'Confidence': None,
+                                            'Risk_Level': 'Inconnu'
+                                        })
+                                        results.append(result_row)
+
+                            except Exception as e:
+                                error_info = {
+                                    'Index': i,
+                                    'SMILES': smiles,
+                                    'Erreur': str(e),
+                                    **row.to_dict()
+                                }
+                                errors.append(error_info)
+
+                                if not skip_invalid:
+                                    result_row = row.to_dict()
+                                    result_row.update({
+                                        'Prediction': 'Erreur calcul',
+                                        'DILI_Probability': None,
+                                        'Confidence': None,
+                                        'Risk_Level': 'Inconnu'
+                                    })
+                                    results.append(result_row)
+
+                            progress_bar.progress((i + 1) / len(df_filtered))
 
                         # Afficher résultats
-                        results_df = pd.DataFrame(results)
                         status_text.text("✅ Analyse terminée!")
 
-                        st.success("🎉 Prédictions terminées!")
-                        st.dataframe(results_df, use_container_width=True)
+                        if results:
+                            results_df = pd.DataFrame(results)
+                            st.success(f"🎉 Prédictions terminées pour {len(results)} molécules!")
 
-                        # Statistiques rapides
-                        col1, col2, col3, col4 = st.columns(4)
-                        with col1:
-                            n_dili = sum(1 for r in results if r['Prediction'] == 'DILI')
-                            st.metric("DILI positifs", n_dili)
-                        with col2:
-                            n_non_dili = sum(1 for r in results if r['Prediction'] == 'Non-DILI')
-                            st.metric("Non-DILI", n_non_dili)
-                        with col3:
-                            n_errors = sum(
-                                1 for r in results if r['Prediction'] == 'Erreur' or r['Prediction'] == 'Erreur SMILES')
-                            st.metric("Erreurs", n_errors)
-                        with col4:
-                            avg_conf = np.mean([r['Confidence'] for r in results if r['Confidence'] is not None])
-                            st.metric("Confiance moy.", f"{avg_conf:.1%}")
+                            # Réorganiser les colonnes pour mettre les résultats en premier
+                            result_columns = ['Prediction', 'DILI_Probability', 'Confidence', 'Risk_Level']
+                            other_columns = [col for col in results_df.columns if col not in result_columns]
+                            ordered_columns = result_columns + other_columns
+                            results_df = results_df[ordered_columns]
 
-                        # Téléchargement
-                        csv = results_df.to_csv(index=False)
-                        st.download_button(
-                            label="📥 Télécharger résultats complets",
-                            data=csv,
-                            file_name=f"dili_predictions_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                            mime="text/csv"
-                        )
+                            st.dataframe(results_df, use_container_width=True)
+
+                            # Statistiques rapides
+                            col1, col2, col3, col4 = st.columns(4)
+                            with col1:
+                                n_dili = sum(1 for r in results if r['Prediction'] == 'DILI')
+                                st.metric("DILI positifs", n_dili)
+                            with col2:
+                                n_non_dili = sum(1 for r in results if r['Prediction'] == 'Non-DILI')
+                                st.metric("Non-DILI", n_non_dili)
+                            with col3:
+                                if errors:
+                                    st.metric("Erreurs", len(errors))
+                                else:
+                                    st.metric("Erreurs", 0)
+                            with col4:
+                                valid_conf = [r['Confidence'] for r in results if r['Confidence'] is not None]
+                                if valid_conf:
+                                    avg_conf = np.mean(valid_conf)
+                                    st.metric("Confiance moy.", f"{avg_conf:.1%}")
+                                else:
+                                    st.metric("Confiance moy.", "N/A")
+
+                            # Téléchargement des résultats
+                            csv = results_df.to_csv(index=False)
+                            st.download_button(
+                                label="📥 Télécharger résultats complets",
+                                data=csv,
+                                file_name=f"dili_predictions_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                                mime="text/csv"
+                            )
+
+                        # Afficher les erreurs si demandé
+                        if errors and save_errors:
+                            st.subheader("🚨 Erreurs détectées")
+                            errors_df = pd.DataFrame(errors)
+                            st.dataframe(errors_df, use_container_width=True)
+
+                            # Téléchargement des erreurs
+                            csv_errors = errors_df.to_csv(index=False)
+                            st.download_button(
+                                label="📥 Télécharger rapport d'erreurs",
+                                data=csv_errors,
+                                file_name=f"dili_errors_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                                mime="text/csv"
+                            )
 
                 else:
-                    st.error("❌ Colonne 'SMILES' non trouvée dans le fichier")
+                    st.error("❌ Aucune colonne SMILES sélectionnée ou colonne introuvable")
                     st.write("Colonnes disponibles:", list(df.columns))
 
             except Exception as e:
                 st.error(f"Erreur lecture fichier: {e}")
+                st.write("Vérifiez que le fichier est bien formaté et accessible.")
 
     with tab3:
         st.header("Chimiothèque - Pharmacopée Ouest-Africaine")
