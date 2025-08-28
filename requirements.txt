@@ -2,6 +2,7 @@ streamlit
 joblib
 pandas
 numpy
+rdkit
 matplotlib
 seaborn
 pillow
