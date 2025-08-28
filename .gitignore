@@ -1,0 +1,8 @@
+.idea/
+best_dili_model_20250826_002227.pkl
+best_model_info_20250826_002227.json
+environment.yml
+__pycache__/
+*.pyc
+.DS_Store
+app.py
