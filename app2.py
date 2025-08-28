@@ -7,7 +7,6 @@ from rdkit.Chem import Descriptors, rdMolDescriptors, Crippen, Lipinski
 import matplotlib.pyplot as plt
 import seaborn as sns
 from PIL import Image
-from rdkit.Chem import Draw
 import io
 import base64
 import requests
@@ -22,7 +21,7 @@ st.set_page_config(
 )
 
 # Configuration GitHub Releases
-GITHUB_REPO = "kym94/DILI-Prediction-App"  # À MODIFIER
+GITHUB_REPO = "kym94/DILI-Prediction-App"
 MODEL_VERSION = "v1.0"
 MODEL_URL = f"https://github.com/{GITHUB_REPO}/releases/download/{MODEL_VERSION}/best_dili_model_20250826_002227.pkl"
 
@@ -296,13 +295,16 @@ def predict_dili(model, features_dict):
 def draw_molecule(smiles, size=(300, 200)):
     """Dessine la structure 2D de la molécule"""
     try:
+        from rdkit.Chem import Draw
         mol = Chem.MolFromSmiles(smiles)
         if mol is None:
             return None
-
         img = Draw.MolToImage(mol, size=size)
         return img
-    except:
+    except ImportError:
+        st.info("Visualisation moléculaire non disponible sur cette plateforme")
+        return None
+    except Exception:
         return None
 
 
@@ -424,8 +426,6 @@ def main():
                 mol_img = draw_molecule(smiles_input, size=(250, 200))
                 if mol_img:
                     st.image(mol_img, caption="Structure 2D", width=250)
-                else:
-                    st.error("SMILES invalide - impossible de dessiner la structure")
 
         if predict_btn and smiles_input:
             with st.spinner("Calcul des descripteurs et prédiction en cours..."):

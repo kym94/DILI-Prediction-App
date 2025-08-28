@@ -2,7 +2,7 @@ streamlit
 joblib
 pandas
 numpy
-rdkit==2023.3.2
+rdkit
 matplotlib
 seaborn
 pillow
